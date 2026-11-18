@@ -1,67 +1,62 @@
-"""makefun-news-image-20261118: an illustrated front page summing up
-Wednesday 18 November 2026 world news — 33 stories, 6 continents,
-one world map.
+#!/usr/bin/env python3
+"""make.fun entry: 18 November 2026 world news in one image (v3).
 
-The program is deterministic and offline: it base64-decodes the
-entry image bundled in this repository (entry.png.b64) and writes
-it to the output path. It runs under the make.fun sandbox with no
-network access and must produce identical bytes on every run.
+Decodes the bundled front-page image (entry.png.b64) and writes it as
+entry.png. The front page sums up Wednesday 18 November 2026: 33 stories
+across 6 continents, with 9 illustrated features, a world map, a
+"BY THE NUMBERS" strip and an "ALSO ON ..." list. Stdlib only, no network.
 """
-
 import base64
 import os
 import sys
-from pathlib import Path
 
-# PNG signature: the first eight bytes of every PNG file.
-PNG_MAGIC = bytes([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A])
-
-# The image must fit make.fun's 1 MiB entry limit.
-MAX_SIZE = 1024 * 1024
+HERE = os.path.dirname(os.path.abspath(__file__))
+B64_PATH = os.path.join(HERE, "entry.png.b64")
+MAX_BYTES = 1024 * 1024  # the image itself must stay under 1 MiB
+PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
 
 
-def resolve_output() -> Path:
-    """Pick the output path for entry.png.
-
-    The make.fun harness sets MAKEFUN_OUTPUT_DIR; the sandbox also
-    provides /output. Locally, fall back to the current directory.
-    """
-    out_dir = os.environ.get("MAKEFUN_OUTPUT_DIR")
-    if out_dir:
-        return Path(out_dir) / "entry.png"
-    if Path("/output").is_dir():
-        return Path("/output/entry.png")
-    return Path("entry.png")
+def output_path():
+    """Where the image goes: MAKEFUN_OUTPUT_DIR, else /output, else here."""
+    env_dir = os.environ.get("MAKEFUN_OUTPUT_DIR")
+    if env_dir:
+        return os.path.join(env_dir, "entry.png")
+    if os.path.isdir("/output"):
+        return "/output/entry.png"
+    return os.path.join(HERE, "entry.png")
 
 
-def main() -> int:
-    here = Path(__file__).resolve().parent
-    b64_path = here / "entry.png.b64"
-    raw = b64_path.read_bytes()
+def main():
+    # Fail fast: base64 expands data by ~4/3, so a bundle over ~1.4 MB
+    # cannot decode within the 1 MiB image limit. Check before decoding.
+    b64_size = os.path.getsize(B64_PATH)
+    if b64_size > MAX_BYTES * 4 // 3 + 8:
+        print("entry.png.b64 is %d bytes; too large to decode under 1 MiB"
+              % b64_size, file=sys.stderr)
+        return 1
+    with open(B64_PATH, "r", encoding="ascii") as f:
+        encoded = f.read().strip()
     try:
-        png = base64.b64decode(raw, validate=True)
+        data = base64.b64decode(encoded, validate=True)
     except Exception as exc:
-        print(f"error: entry.png.b64 is not valid base64: {exc}", file=sys.stderr)
+        print("entry.png.b64 is not valid base64: %s" % exc, file=sys.stderr)
         return 1
-    if len(png) < len(PNG_MAGIC) or png[:8] != PNG_MAGIC:
-        print("error: decoded data is not a PNG file", file=sys.stderr)
+    if not data.startswith(PNG_MAGIC):
+        print("decoded payload is not a PNG", file=sys.stderr)
         return 1
-    if len(png) > MAX_SIZE:
-        print(f"error: PNG is {len(png)} bytes, over the 1048576-byte limit", file=sys.stderr)
+    if not 0 < len(data) <= MAX_BYTES:
+        print("decoded PNG is %d bytes (limit %d)" % (len(data), MAX_BYTES),
+              file=sys.stderr)
         return 1
-    # A complete PNG ends with the 12-byte IEND chunk (zero length, type
-    # "IEND", CRC 0xAE426082). A truncated image would still pass the
-    # magic check above, so verify the trailer too.
-    iend = bytes([0, 0, 0, 0, 0x49, 0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82])
-    if len(png) < 12 or png[-12:] != iend:
-        print("error: PNG is truncated (missing IEND trailer)", file=sys.stderr)
-        return 1
-    out = resolve_output()
-    out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_bytes(png)
-    print(f"wrote {out} ({len(png)} bytes)")
+    out = output_path()
+    parent = os.path.dirname(out)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+    with open(out, "wb") as f:
+        f.write(data)
+    print("wrote %s (%d bytes)" % (out, len(data)))
     return 0
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    sys.exit(main())
